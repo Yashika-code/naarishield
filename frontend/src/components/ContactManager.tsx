@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { UserPlus, Trash2, Phone, UserCheck, AlertCircle } from 'lucide-react';
+import { UserPlus, Trash2, Phone, UserCheck, AlertCircle, Send, CheckCircle, Clock } from 'lucide-react';
 import type { TrustedContact } from '../types';
+import { api } from '../services/api';
 
 interface ContactManagerProps {
   contacts: TrustedContact[];
@@ -19,6 +20,8 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
   const [relationship, setRelationship] = useState('Parent');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [invitingId, setInvitingId] = useState<string | null>(null);
+  const [invitationSuccess, setInvitationSuccess] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +46,27 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
       setError(err?.message || 'Failed to add emergency contact');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSendInvite = async (contactId: string, contactName: string) => {
+    try {
+      setInvitingId(contactId);
+      const res = await api.inviteContact(contactId);
+      if (res.success) {
+        setInvitationSuccess(`Invitation dispatched to ${contactName}`);
+        setTimeout(() => setInvitationSuccess(null), 5000);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed sending invitation');
+    } finally {
+      setInvitingId(null);
+    }
+  };
+
+  const handleDeleteWithConfirm = async (id: string, contactName: string) => {
+    if (window.confirm(`Are you sure you want to remove ${contactName} from your emergency contacts?`)) {
+      await onDeleteContact(id);
     }
   };
 
@@ -75,6 +99,13 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
           <div className="mb-3 p-2.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {invitationSuccess && (
+          <div className="mb-3 p-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0" />
+            <span>{invitationSuccess}</span>
           </div>
         )}
 
@@ -138,7 +169,7 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs">
-                    {index + 1}
+                    {contact.priority || index + 1}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -146,21 +177,43 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
                       <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
                         {contact.relationship}
                       </span>
+                      {contact.verificationStatus === 'verified' ? (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded font-medium">
+                          <CheckCircle className="w-2.5 h-2.5" /> Verified
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-medium">
+                          <Clock className="w-2.5 h-2.5" /> Pending
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                       <Phone className="w-3 h-3 text-slate-400" />
-                      <span>{contact.phone}</span>
+                      <span>{contact.phoneNumber || contact.phone}</span>
                     </div>
                   </div>
                 </div>
 
-                <button
-                  onClick={() => onDeleteContact(contact.id)}
-                  title="Remove contact"
-                  className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {contact.verificationStatus !== 'verified' && (
+                    <button
+                      onClick={() => handleSendInvite(contact.id, contact.name)}
+                      disabled={invitingId === contact.id}
+                      title="Send verification invitation link"
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg px-2 py-1 transition"
+                    >
+                      <Send className="w-3 h-3" />
+                      <span>{invitingId === contact.id ? 'Sending...' : 'Invite'}</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDeleteWithConfirm(contact.id, contact.name)}
+                    title="Remove contact"
+                    className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -168,8 +221,9 @@ export const ContactManager: React.FC<ContactManagerProps> = ({
       </div>
 
       <div className="p-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
-        Contacts will receive immediate SMS & WhatsApp alerts with real-time location when SOS triggers.
+        Contacts receive immediate emergency alerts with GPS maps during an SOS. Verified contacts ensure highest delivery reliability.
       </div>
     </div>
   );
 };
+

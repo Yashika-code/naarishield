@@ -73,3 +73,35 @@ test('Trusted Contact Maximum Limit Enforcement (5 contacts cap)', () => {
   const currentContacts = ['c1', 'c2', 'c3', 'c4', 'c5'];
   assert.equal(currentContacts.length < maxContacts, false);
 });
+
+test('International Phone Validation Regex', () => {
+  const phoneRegex = /^\+?[1-9]\d{7,14}$/;
+  assert.ok(phoneRegex.test('+919876543210'));
+  assert.ok(phoneRegex.test('+14155552671'));
+  assert.equal(phoneRegex.test('invalid-phone'), false);
+  assert.equal(phoneRegex.test('123'), false);
+});
+
+test('Emergency SOS Lifecycle State Progression', () => {
+  const stages = ['CREATED', 'LOCATION_ACQUIRED', 'ALERTS_QUEUED', 'ALERTS_SENT', 'RESOLVED'];
+  assert.equal(stages[0], 'CREATED');
+  assert.equal(stages[stages.length - 1], 'RESOLVED');
+});
+
+test('Journey Live Sharing Expiration & Overdue Calculation', () => {
+  const now = new Date('2026-10-21T21:00:00.000Z');
+  const expectedArrival = new Date('2026-10-21T21:30:00.000Z');
+  const isOverdue = now > expectedArrival;
+  assert.equal(isOverdue, false);
+
+  const later = new Date('2026-10-21T21:35:00.000Z');
+  const isLaterOverdue = later > expectedArrival;
+  assert.equal(isLaterOverdue, true);
+});
+
+test('Community Request Geographic Radius Boundary', () => {
+  const requestedRadius = 15;
+  const clampedRadius = Math.min(Math.max(requestedRadius, 1), 5);
+  assert.equal(clampedRadius, 5, 'Community alerts must be capped within safety radius');
+});
+

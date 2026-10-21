@@ -1,9 +1,19 @@
 import type { UserProfile, TrustedContact, SOSEvent } from '../types';
 import { auth } from '../firebase';
 
-const BACKEND_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api/v1` : '/api/v1';
+const BACKEND_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
+const API_BASE = `${BACKEND_URL}/api/v1`;
 export { BACKEND_URL, API_BASE };
+
+const safeJson = async (res: Response) => {
+  const text = await res.text();
+  if (!text) return { success: res.ok };
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { success: false, error: text || 'Invalid JSON response from server' };
+  }
+};
 
 const getHeaders = async () => {
   let token = 'demo-token';
@@ -24,13 +34,13 @@ const getHeaders = async () => {
 export const api = {
   async getHealth() {
     const res = await fetch(`${API_BASE}/health`);
-    return res.json();
+    return safeJson(res);
   },
 
   async getProfile(): Promise<{ success: boolean; profile: UserProfile }> {
     const headers = await getHeaders();
     const res = await fetch(`${API_BASE}/profile`, { headers });
-    return res.json();
+    return safeJson(res);
   },
 
   async updateProfile(data: Partial<UserProfile>): Promise<{ success: boolean; profile: UserProfile }> {
@@ -40,13 +50,14 @@ export const api = {
       headers,
       body: JSON.stringify(data)
     });
-    return res.json();
+    return safeJson(res);
   },
+
 
   async getContacts(): Promise<{ success: boolean; count: number; contacts: TrustedContact[] }> {
     const headers = await getHeaders();
     const res = await fetch(`${API_BASE}/contacts`, { headers });
-    return res.json();
+    return safeJson(res);
   },
 
   async addContact(contact: { name: string; phoneNumber?: string; phone?: string; relationship?: string; priority?: number }): Promise<{ success: boolean; contact: TrustedContact; error?: string }> {
@@ -59,7 +70,7 @@ export const api = {
         phoneNumber: contact.phoneNumber || contact.phone
       })
     });
-    return res.json();
+    return safeJson(res);
   },
 
   async updateContact(id: string, contact: Partial<TrustedContact>): Promise<{ success: boolean; contact: TrustedContact; error?: string }> {
@@ -69,7 +80,7 @@ export const api = {
       headers,
       body: JSON.stringify(contact)
     });
-    return res.json();
+    return safeJson(res);
   },
 
   async deleteContact(id: string): Promise<{ success: boolean; removedId: string }> {
@@ -78,7 +89,7 @@ export const api = {
       method: 'DELETE',
       headers
     });
-    return res.json();
+    return safeJson(res);
   },
 
   async triggerSOS(data: {
@@ -94,14 +105,15 @@ export const api = {
       headers,
       body: JSON.stringify(data)
     });
-    return res.json();
+    return safeJson(res);
   },
 
   async getSOSHistory(): Promise<{ success: boolean; count: number; events: SOSEvent[] }> {
     const headers = await getHeaders();
     const res = await fetch(`${API_BASE}/sos/history`, { headers });
-    return res.json();
+    return safeJson(res);
   },
+
 
   async cancelSOS(id: string, reason?: string): Promise<{ success: boolean; message: string; event: SOSEvent }> {
     const headers = await getHeaders();
@@ -243,6 +255,103 @@ export const api = {
     return res.json();
   },
 
+  async inviteContact(contactId: string): Promise<{ success: boolean; message: string; result: any }> {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/contacts/${contactId}/invite`, {
+      method: 'POST',
+      headers
+    });
+    return res.json();
+  },
+
+  async verifyContact(contactId: string, token?: string): Promise<{ success: boolean; message: string }> {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/contacts/${contactId}/verify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ token })
+    });
+    return res.json();
+  },
+
+  async getIncidentEvents(incidentId: string): Promise<{ success: boolean; timeline: any[]; notifications: any[] }> {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/incidents/${incidentId}/events`, { headers });
+    return res.json();
+  },
+
+  async acknowledgeIncident(incidentId: string, contactId?: string, responderName?: string): Promise<{ success: boolean; message: string }> {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/incidents/${incidentId}/acknowledge`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ contactId, responderName })
+    });
+    return res.json();
+  },
+
+  // Journey Sharing (Master §10)
+  async getJourneys() {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/journeys`, { headers });
+    return res.json();
+  },
+
+  async createJourney(data: { destination: string; expectedArrivalTime?: string; sharedContacts?: string[]; coordinates?: { latitude: number; longitude: number; accuracy?: number } }) {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/journeys`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    });
+    return res.json();
+  },
+
+  async updateJourneyLocation(journeyId: string, coordinates: { latitude: number; longitude: number; accuracy?: number }) {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/journeys/${journeyId}/location`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(coordinates)
+    });
+    return res.json();
+  },
+
+  async endJourney(journeyId: string) {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/journeys/${journeyId}/end`, {
+      method: 'POST',
+      headers
+    });
+    return res.json();
+  },
+
+  // Community Assistance (Master §7)
+  async getCommunityRequests() {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/community/requests`, { headers });
+    return res.json();
+  },
+
+  async createCommunityRequest(data: { category?: string; description: string; radiusKm?: number; coordinates: { latitude: number; longitude: number } }) {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/community/requests`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    });
+    return res.json();
+  },
+
+  async acceptCommunityRequest(requestId: string) {
+    const headers = await getHeaders();
+    const res = await fetch(`${API_BASE}/community/requests/${requestId}/accept`, {
+      method: 'POST',
+      headers
+    });
+    return res.json();
+  },
+
   async resetDemo(): Promise<{ success: boolean; message: string }> {
     const headers = await getHeaders();
     const res = await fetch(`${API_BASE}/demo/reset`, {
@@ -252,3 +361,4 @@ export const api = {
     return res.json();
   }
 };
+

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, X, ShieldAlert, CheckCircle2, PhoneCall, Radio } from 'lucide-react';
+import { AlertTriangle, X, ShieldAlert, CheckCircle2, PhoneCall, Radio, Phone, ExternalLink } from 'lucide-react';
 import type { SOSEvent } from '../types';
 
 interface SOSModalProps {
@@ -58,9 +58,9 @@ export const SOSModal: React.FC<SOSModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden relative">
+      <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden relative max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="bg-red-600 p-5 text-white flex items-center justify-between">
+        <div className="bg-red-600 p-5 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <ShieldAlert className="w-6 h-6 animate-pulse" />
             <h2 className="text-lg font-bold">Emergency SOS Dispatch</h2>
@@ -75,31 +75,103 @@ export const SOSModal: React.FC<SOSModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6">
-          {activeEvent && activeEvent.status === 'active' ? (
-            <div className="text-center py-3">
-              <div className="inline-flex p-3 rounded-full bg-red-100 text-red-600 mb-3 animate-pulse">
+        <div className="p-6 overflow-y-auto flex-1">
+          {activeEvent && (activeEvent.status === 'active' || activeEvent.status === 'ALERTS_SENT' || activeEvent.status === 'PARTIALLY_FAILED' || activeEvent.status === 'CREATED' || activeEvent.status === 'LOCATION_ACQUIRED' || activeEvent.status === 'ALERTS_QUEUED') ? (
+            <div className="text-center py-2">
+              <div className="inline-flex p-3 rounded-full bg-red-100 text-red-600 mb-2 animate-pulse">
                 <AlertTriangle className="w-8 h-8" />
               </div>
               <h3 className="text-xl font-bold text-slate-900 mb-1">EMERGENCY SOS IS ACTIVE</h3>
-              <p className="text-sm text-slate-600 mb-4">
-                Alert notifications and GPS coordinates have been broadcast to your trusted emergency contacts.
+              <p className="text-xs text-slate-600 mb-4">
+                Distress alert registered. Real-time GPS location and message dispatched to emergency contacts.
               </p>
 
-              <div className="bg-slate-50 rounded-xl p-3 mb-5 border border-slate-200 text-left text-xs space-y-1.5">
+              {/* Status & Lifecycle badge */}
+              <div className="bg-slate-50 rounded-xl p-3 mb-4 border border-slate-200 text-left text-xs space-y-1.5">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Event ID:</span>
+                  <span className="text-slate-500">Incident ID:</span>
                   <span className="font-mono font-medium text-slate-800">{activeEvent.id}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Trigger Source:</span>
-                  <span className="font-semibold text-red-600 uppercase">{activeEvent.triggerSource}</span>
+                  <span className="text-slate-500">Lifecycle Status:</span>
+                  <span className="font-bold text-red-600 uppercase">{activeEvent.status}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Triggered At:</span>
-                  <span className="text-slate-700">{new Date(activeEvent.createdAt || activeEvent.timestamp || Date.now()).toLocaleTimeString()}</span>
+                  <span className="text-slate-500">Trigger Source:</span>
+                  <span className="font-semibold text-slate-800 uppercase">{activeEvent.triggerSource}</span>
                 </div>
+                {activeEvent.locationLink && (
+                  <div className="flex justify-between items-center pt-1 border-t border-slate-200">
+                    <span className="text-slate-500">Live Map:</span>
+                    <a
+                      href={activeEvent.locationLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-red-600 hover:underline font-semibold"
+                    >
+                      <span>Open Google Maps</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
               </div>
+
+              {/* Outbound Supported Call Action */}
+              {activeEvent.callWorkflow && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-left">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-red-900">Supported Emergency Call</p>
+                      <p className="text-[11px] text-red-700">
+                        {activeEvent.callWorkflow.primaryContactName} ({activeEvent.callWorkflow.primaryContactPhone})
+                      </p>
+                    </div>
+                    {activeEvent.callWorkflow.supportedAction && (
+                      <a
+                        href={activeEvent.callWorkflow.supportedAction}
+                        className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs px-3 py-1.5 rounded-lg transition shadow-sm"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>Place Call</span>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Honest Individual Provider Status List */}
+              {activeEvent.notifications && activeEvent.notifications.length > 0 && (
+                <div className="mb-4 text-left">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Notification Provider Status
+                  </h4>
+                  <div className="space-y-1.5">
+                    {activeEvent.notifications.map((n, idx) => (
+                      <div key={idx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-slate-800">{n.name}</p>
+                          <p className="text-[10px] text-slate-500">{n.phoneNumber || n.phone} • {n.provider}</p>
+                        </div>
+                        <div>
+                          {n.status === 'DELIVERED' || n.status === 'delivered' ? (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-semibold px-2 py-0.5 rounded-full">
+                              Delivered
+                            </span>
+                          ) : n.status === 'DEMO_DISPATCHED' ? (
+                            <span className="text-[10px] bg-indigo-100 text-indigo-800 font-semibold px-2 py-0.5 rounded-full" title={n.details || 'Demo Simulation'}>
+                              Demo Dispatched
+                            </span>
+                          ) : (
+                            <span className="text-[10px] bg-red-100 text-red-800 font-semibold px-2 py-0.5 rounded-full">
+                              {n.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <button
                 onClick={() => onCancelActiveSOS(activeEvent.id)}
@@ -118,7 +190,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                 {countdown}
               </div>
               <p className="text-xs text-slate-500 mb-6">
-                Broadcasts alert message with live coordinates to all 3 emergency contacts immediately when counter reaches zero.
+                Broadcasts alert message with live coordinates to registered emergency contacts immediately when counter reaches zero.
               </p>
 
               <div className="flex gap-3">
@@ -154,7 +226,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                     </div>
                     <div className="text-left">
                       <div className="text-base font-bold">Manual SOS Dispatch</div>
-                      <div className="text-xs text-red-100 font-normal">Immediate alert to all 3 emergency contacts</div>
+                      <div className="text-xs text-red-100 font-normal">Immediate alert to all verified emergency contacts</div>
                     </div>
                   </div>
                   <span className="text-xs bg-white/20 px-2.5 py-1 rounded-full font-semibold">5s Grace</span>
@@ -170,8 +242,8 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                       <Radio className="w-5 h-5 text-indigo-400" />
                     </div>
                     <div className="text-left">
-                      <div className="text-sm font-semibold">Simulate Voice Keyword Trigger</div>
-                      <div className="text-xs text-slate-400 font-normal">Android companion client trigger simulation</div>
+                      <div className="text-sm font-semibold">Voice Trigger Simulation</div>
+                      <div className="text-xs text-slate-400 font-normal">Triggers SOS using emergency keywords</div>
                     </div>
                   </div>
                   <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">Test Pipe</span>
@@ -180,7 +252,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
 
               <div className="mt-5 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-500">
                 <p className="font-semibold text-slate-700 mb-0.5">Privacy & Safety Notice:</p>
-                In production, notifications are routed through certified SMS/WhatsApp providers with carrier delivery confirmation.
+                In production, notifications are routed through certified SMS/WhatsApp providers with carrier delivery confirmation. Demo mode is clearly labeled to prevent simulated false positives.
               </div>
             </div>
           )}
@@ -189,3 +261,4 @@ export const SOSModal: React.FC<SOSModalProps> = ({
     </div>
   );
 };
+

@@ -12,8 +12,11 @@ import {
   FileText,
   Users,
   Navigation,
-  Sparkles
+  Sparkles,
+  Compass,
+  Users2
 } from 'lucide-react';
+
 import { api, BACKEND_URL } from './services/api';
 import type { UserProfile, TrustedContact, SOSEvent } from './types';
 import { SafetyMap } from './components/SafetyMap';
@@ -22,6 +25,9 @@ import { SOSHistory } from './components/SOSHistory';
 import { SOSModal } from './components/SOSModal';
 import { AuthModal } from './components/AuthModal';
 import { EmergencySiren } from './components/EmergencySiren';
+import { VoiceTrigger } from './components/VoiceTrigger';
+import { JourneySafety } from './components/JourneySafety';
+import { CommunitySafety } from './components/CommunitySafety';
 import { SafetyCheckInTimer } from './components/SafetyCheckInTimer';
 import { IncidentReports } from './components/IncidentReports';
 import { SafetyCircle } from './components/SafetyCircle';
@@ -41,9 +47,11 @@ export function App() {
   const [, setIsLoading] = useState(true);
   const [backendHealth, setBackendHealth] = useState<{ database?: string; firebaseInitialized?: boolean } | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [voiceTriggerEnabled, setVoiceTriggerEnabled] = useState(true);
 
   // Active Navigation Tab
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'checkin' | 'incidents' | 'circle' | 'resources' | 'planner'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'journeys' | 'community' | 'checkin' | 'incidents' | 'circle' | 'resources' | 'planner'>('dashboard');
+
 
   // Geolocation
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number; accuracy?: number } | null>({
@@ -304,6 +312,30 @@ export function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('journeys')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'journeys'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Compass className="w-3.5 h-3.5" />
+            Live Journey & Trip Safety
+          </button>
+
+          <button
+            onClick={() => setActiveTab('community')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 ${
+              activeTab === 'community'
+                ? 'bg-emerald-600 text-white'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Users2 className="w-3.5 h-3.5" />
+            Community Helpers (Opt-In)
+          </button>
+
+          <button
             onClick={() => setActiveTab('checkin')}
             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 ${
               activeTab === 'checkin'
@@ -362,6 +394,7 @@ export function App() {
             <Sparkles className="w-3.5 h-3.5" />
             AI Safety Planner
           </button>
+
         </div>
       </div>
 
@@ -415,11 +448,18 @@ export function App() {
           </div>
         </div>
 
-        {/* Tab 1: Dashboard (Siren, Map, Contacts, History) */}
+        {/* Tab 1: Dashboard (Siren, Voice Trigger, Map, Contacts, History) */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* Feature 1: Emergency Siren Sound */}
+            {/* Emergency Siren Sound */}
             <EmergencySiren />
+
+            {/* Emergency Voice Trigger (Web Speech API) */}
+            <VoiceTrigger
+              isEnabled={voiceTriggerEnabled}
+              onToggle={setVoiceTriggerEnabled}
+              onTriggerSOS={() => handleTriggerSOS('voice')}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Column 1 & 2: Map & Contacts */}
@@ -458,11 +498,19 @@ export function App() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center p-2 rounded-lg bg-slate-50 border border-slate-100">
-                      <span className="text-slate-600">Firestore Persistence:</span>
+                      <span className="text-slate-600">Database Storage:</span>
                       <span className={`font-semibold px-2 py-0.5 rounded ${
                         backendHealth?.firebaseInitialized ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'
                       }`}>
-                        {backendHealth?.firebaseInitialized ? 'Connected' : 'Demo Memory'}
+                        {backendHealth?.firebaseInitialized ? 'Firebase Admin / Firestore' : 'Safe In-Memory Demo'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center p-2 rounded-lg bg-slate-50 border border-slate-100">
+                      <span className="text-slate-600">Voice Trigger:</span>
+                      <span className={`font-semibold px-2 py-0.5 rounded ${
+                        voiceTriggerEnabled ? 'text-emerald-700 bg-emerald-50' : 'text-slate-600 bg-slate-100'
+                      }`}>
+                        {voiceTriggerEnabled ? 'Active (Bachao / Help)' : 'Muted'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center p-2 rounded-lg bg-slate-50 border border-slate-100">
@@ -482,40 +530,55 @@ export function App() {
           </div>
         )}
 
-        {/* Tab 2: Feature 2: Safety Check-In Timer */}
+        {/* Tab 2: Feature: Live Journey & Trip Safety */}
+        {activeTab === 'journeys' && (
+          <div className="max-w-4xl mx-auto">
+            <JourneySafety contacts={contacts} currentCoordinates={coordinates} />
+          </div>
+        )}
+
+        {/* Tab 3: Feature: Opt-in Community Assistance */}
+        {activeTab === 'community' && (
+          <div className="max-w-4xl mx-auto">
+            <CommunitySafety currentCoordinates={coordinates} />
+          </div>
+        )}
+
+        {/* Tab 4: Feature 2: Safety Check-In Timer */}
         {activeTab === 'checkin' && (
           <div className="max-w-3xl mx-auto">
             <SafetyCheckInTimer />
           </div>
         )}
 
-        {/* Tab 3: Feature 3: Incident Reports & PDF Export */}
+        {/* Tab 5: Feature 3: Incident Reports & PDF Export */}
         {activeTab === 'incidents' && (
           <div className="max-w-4xl mx-auto">
             <IncidentReports />
           </div>
         )}
 
-        {/* Tab 4: Feature 4: Safety Circle */}
+        {/* Tab 6: Feature 4: Safety Circle */}
         {activeTab === 'circle' && (
           <div className="max-w-3xl mx-auto">
             <SafetyCircle />
           </div>
         )}
 
-        {/* Tab 5: Feature 5: Nearby Emergency Resources */}
+        {/* Tab 7: Feature 5: Nearby Emergency Resources */}
         {activeTab === 'resources' && (
           <div className="max-w-4xl mx-auto">
             <EmergencyResources coordinates={coordinates} />
           </div>
         )}
 
-        {/* Tab 6: Feature 6: AI Safety Planner */}
+        {/* Tab 8: Feature 6: AI Safety Planner */}
         {activeTab === 'planner' && (
           <div className="max-w-3xl mx-auto">
             <AISafetyPlanner />
           </div>
         )}
+
       </main>
 
       {/* Auth Modal */}

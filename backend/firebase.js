@@ -1,5 +1,6 @@
 import { initializeApp, getApps, cert, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getDatabase } from 'firebase-admin/database';
 import { getAuth } from 'firebase-admin/auth';
 import dotenv from 'dotenv';
 
@@ -7,6 +8,7 @@ dotenv.config();
 
 let firebaseInitialized = false;
 let firestoreDb = null;
+let realtimeDb = null;
 let firebaseAuth = null;
 let initError = null;
 
@@ -37,6 +39,13 @@ try {
     }
 
     firestoreDb = getFirestore(app);
+    try {
+      if (databaseURL) {
+        realtimeDb = getDatabase(app);
+      }
+    } catch (rtdbErr) {
+      console.warn('[Firebase RTDB] RTDB attach notice:', rtdbErr.message);
+    }
     firebaseAuth = getAuth(app);
     firebaseInitialized = true;
     console.log(`[Firebase Admin] Successfully connected to Firebase project: ${projectId}`);
@@ -52,6 +61,9 @@ try {
       app = apps[0];
     }
     firestoreDb = getFirestore(app);
+    if (databaseURL) {
+      try { realtimeDb = getDatabase(app); } catch (e) {}
+    }
     firebaseAuth = getAuth(app);
     firebaseInitialized = true;
     console.log('[Firebase Admin] Connected using GOOGLE_APPLICATION_CREDENTIALS');
@@ -64,4 +76,5 @@ try {
   console.warn('[Firebase Admin] Initialization failed:', err.message);
 }
 
-export { firestoreDb, firebaseAuth, firebaseInitialized, initError };
+export { firestoreDb, realtimeDb, firebaseAuth, firebaseInitialized, initError };
+

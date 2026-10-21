@@ -90,14 +90,46 @@ export const swaggerDocument = {
     "/api/v1/contacts/{id}": {
       delete: { summary: "Delete emergency contact", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Deleted" } } }
     },
+    "/api/v1/contacts/{id}/invite": {
+      post: { summary: "Send invitation to emergency contact", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Invite sent" } } }
+    },
+    "/api/v1/contacts/{id}/verify": {
+      post: { summary: "Verify and accept contact nomination", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Verified" } } }
+    },
     "/api/v1/sos/trigger": {
-      post: { summary: "Trigger manual or voice SOS alert", responses: { 201: { description: "SOS Dispatched" } } }
+      post: { summary: "Trigger manual or voice SOS alert (Full lifecycle)", responses: { 201: { description: "SOS Dispatched" } } }
+    },
+    "/api/v1/sos/{id}": {
+      get: { summary: "Get single SOS incident details", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Incident details" } } }
     },
     "/api/v1/sos/history": {
       get: { summary: "List SOS history", responses: { 200: { description: "Past events" } } }
     },
     "/api/v1/sos/{id}/cancel": {
       post: { summary: "Cancel active SOS alert", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Alert cancelled" } } }
+    },
+    "/api/v1/incidents/{id}/events": {
+      get: { summary: "Get timeline events of an incident", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Timeline events" } } }
+    },
+    "/api/v1/incidents/{id}/acknowledge": {
+      post: { summary: "Acknowledge distress incident by contact", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Acknowledged" } } }
+    },
+    "/api/v1/journeys": {
+      get: { summary: "List active journeys", responses: { 200: { description: "Journeys" } } },
+      post: { summary: "Start journey sharing trip", responses: { 201: { description: "Trip started" } } }
+    },
+    "/api/v1/journeys/{id}/location": {
+      post: { summary: "Update journey GPS location", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Updated" } } }
+    },
+    "/api/v1/journeys/{id}/end": {
+      post: { summary: "End journey sharing trip", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Ended" } } }
+    },
+    "/api/v1/community/requests": {
+      get: { summary: "List nearby community assistance requests", responses: { 200: { description: "Requests" } } },
+      post: { summary: "Post opt-in community safety request", responses: { 201: { description: "Posted" } } }
+    },
+    "/api/v1/community/requests/{id}/accept": {
+      post: { summary: "Accept community assistance request", parameters: [{ name: "id", in: "path", required: true }], responses: { 200: { description: "Accepted" } } }
     },
     "/api/v1/check-ins": {
       get: { summary: "List active and past journey check-ins", responses: { 200: { description: "Check-in list" } } },
@@ -149,3 +181,4 @@ export const swaggerDocument = {
     }
   }
 };
+

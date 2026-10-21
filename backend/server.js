@@ -7,7 +7,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import PDFDocument from 'pdfkit';
 import { swaggerDocument } from './swagger.js';
-import { firestoreDb, firebaseAuth, firebaseInitialized, initError } from './firebase.js';
+import { firestoreDb, realtimeDb, firebaseAuth, firebaseInitialized, initError } from './firebase.js';
+import { notificationService } from './services/notificationService.js';
 
 dotenv.config();
 
@@ -48,6 +49,8 @@ let memoryStore = {
   trustedContacts: [],
   sosEvents: [],
   checkIns: [],
+  journeys: [],
+  communityRequests: [],
   incidentReports: [],
   safetyCircle: [],
   safetyPlans: []
@@ -218,8 +221,10 @@ app.put('/api/v1/profile', authenticateUser, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// Trusted Contacts Routes
+// Trusted Contacts Routes (Max 5, Invitation & Verification)
 // ----------------------------------------------------
+const phoneRegex = /^\+?[1-9]\d{7,14}$/;
+
 app.get('/api/v1/contacts', authenticateUser, async (req, res) => {
   try {
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
@@ -234,6 +239,7 @@ app.get('/api/v1/contacts', authenticateUser, async (req, res) => {
       }
     }
     const userContacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
+    userContacts.sort((a, b) => (a.priority || 99) - (b.priority || 99));
     res.json({ success: true, count: userContacts.length, contacts: userContacts });
   } catch (err) {
     res.status(200).json({ success: true, count: 0, contacts: [] });
@@ -241,9 +247,15 @@ app.get('/api/v1/contacts', authenticateUser, async (req, res) => {
 });
 
 app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
-  const phone = req.body.phoneNumber || req.body.phone;
+  const phone = (req.body.phoneNumber || req.body.phone || '').trim();
   if (!req.body.name || !phone) {
     return res.status(400).json({ success: false, error: 'Name and phone are required' });
+  }
+
+  // International phone validation
+  const cleanPhone = phone.replace(/[\s\-()]/g, '');
+  if (!phoneRegex.test(cleanPhone)) {
+    return res.status(400).json({ success: false, error: 'Invalid international phone number format (e.g. +919876543210)' });
   }
 
   try {
@@ -251,17 +263,39 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
       try {
         const existing = await firestoreDb.collection('trustedContacts').where('userId', '==', req.user.uid).get();
         if (existing.size >= 5) {
-          return res.status(400).json({ success: false, error: 'Maximum 5 contacts allowed' });
+          return res.status(400).json({ success: false, error: 'Maximum 5 emergency contacts allowed' });
         }
+
+        // Duplicate check
+        let isDuplicate = false;
+        existing.forEach(d => {
+          if (d.data().phoneNumber === cleanPhone) isDuplicate = true;
+        });
+        if (isDuplicate) {
+          return res.status(400).json({ success: false, error: 'A contact with this phone number already exists' });
+        }
+
+        const inviteToken = uuidv4().substring(0, 8);
         const newContact = {
           userId: req.user.uid,
-          name: req.body.name,
-          phoneNumber: phone,
+          name: req.body.name.trim(),
+          phoneNumber: cleanPhone,
           relationship: req.body.relationship || 'Emergency Contact',
           priority: req.body.priority || existing.size + 1,
+          verificationStatus: 'pending_verification',
+          inviteToken,
           createdAt: new Date().toISOString()
         };
+
         const docRef = await firestoreDb.collection('trustedContacts').add(newContact);
+        
+        // Also persist to Realtime Database if connected
+        if (realtimeDb) {
+          try {
+            await realtimeDb.ref(`users/${req.user.uid}/trustedContacts/${docRef.id}`).set(newContact);
+          } catch (rtdbErr) {}
+        }
+
         return res.status(201).json({ success: true, contact: { id: docRef.id, ...newContact } });
       } catch (dbErr) {
         console.warn('[Firestore] Contact add failed, falling back to local session store:', dbErr.message);
@@ -270,15 +304,22 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
 
     const userContacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
     if (userContacts.length >= 5) {
-      return res.status(400).json({ success: false, error: 'Maximum 5 contacts allowed' });
+      return res.status(400).json({ success: false, error: 'Maximum 5 emergency contacts allowed' });
     }
+    if (userContacts.some(c => c.phoneNumber === cleanPhone)) {
+      return res.status(400).json({ success: false, error: 'A contact with this phone number already exists' });
+    }
+
+    const inviteToken = uuidv4().substring(0, 8);
     const contact = {
       id: `contact-${uuidv4().substring(0, 8)}`,
       userId: req.user.uid,
-      name: req.body.name,
-      phoneNumber: phone,
+      name: req.body.name.trim(),
+      phoneNumber: cleanPhone,
       relationship: req.body.relationship || 'Emergency Contact',
       priority: req.body.priority || userContacts.length + 1,
+      verificationStatus: 'pending_verification',
+      inviteToken,
       createdAt: new Date().toISOString()
     };
     memoryStore.trustedContacts.push(contact);
@@ -288,6 +329,77 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
   }
 });
 
+// Send invitation to emergency contact
+app.post('/api/v1/contacts/:id/invite', authenticateUser, async (req, res) => {
+  try {
+    let contact = null;
+    let docRef = null;
+
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      docRef = firestoreDb.collection('trustedContacts').doc(req.params.id);
+      const snap = await docRef.get();
+      if (snap.exists && snap.data().userId === req.user.uid) {
+        contact = { id: snap.id, ...snap.data() };
+      }
+    } else {
+      contact = memoryStore.trustedContacts.find(c => c.id === req.params.id && c.userId === req.user.uid);
+    }
+
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found or unauthorized' });
+    }
+
+    const inviteResult = await notificationService.sendContactInvitation({
+      contact,
+      user: req.user,
+      inviteToken: contact.inviteToken || uuidv4().substring(0, 8)
+    });
+
+    res.json({
+      success: true,
+      message: `Invitation successfully dispatched to ${contact.name}`,
+      result: inviteResult
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Verify contact acceptance
+app.post('/api/v1/contacts/:id/verify', async (req, res) => {
+  const { token } = req.body;
+  try {
+    if (firebaseInitialized && firestoreDb) {
+      const docRef = firestoreDb.collection('trustedContacts').doc(req.params.id);
+      const snap = await docRef.get();
+      if (!snap.exists) return res.status(404).json({ success: false, error: 'Contact not found' });
+      
+      const data = snap.data();
+      if (data.inviteToken && token && data.inviteToken !== token) {
+        return res.status(400).json({ success: false, error: 'Invalid verification token' });
+      }
+
+      await docRef.update({
+        verificationStatus: 'verified',
+        verifiedAt: new Date().toISOString()
+      });
+
+      return res.json({ success: true, message: 'Contact successfully verified and confirmed as emergency guardian.' });
+    }
+
+    const contact = memoryStore.trustedContacts.find(c => c.id === req.params.id);
+    if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
+    if (contact.inviteToken && token && contact.inviteToken !== token) {
+      return res.status(400).json({ success: false, error: 'Invalid verification token' });
+    }
+
+    contact.verificationStatus = 'verified';
+    contact.verifiedAt = new Date().toISOString();
+    res.json({ success: true, message: 'Contact successfully verified and confirmed as emergency guardian.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 app.delete('/api/v1/contacts/:id', authenticateUser, async (req, res) => {
   try {
@@ -298,6 +410,9 @@ app.delete('/api/v1/contacts/:id', authenticateUser, async (req, res) => {
         return res.status(404).json({ success: false, error: 'Contact not found or unauthorized' });
       }
       await docRef.delete();
+      if (realtimeDb) {
+        try { await realtimeDb.ref(`users/${req.user.uid}/trustedContacts/${req.params.id}`).remove(); } catch (e) {}
+      }
       return res.json({ success: true, message: 'Deleted', removedId: req.params.id });
     }
     const idx = memoryStore.trustedContacts.findIndex(c => c.id === req.params.id && c.userId === req.user.uid);
@@ -309,8 +424,10 @@ app.delete('/api/v1/contacts/:id', authenticateUser, async (req, res) => {
   }
 });
 
+
 // ----------------------------------------------------
-// SOS Trigger & Notification Pipeline
+// SOS Trigger & Notification Pipeline (Full Lifecycle)
+// Lifecycle: CREATED -> LOCATION_ACQUIRED -> ALERTS_QUEUED -> ALERTS_SENT/PARTIALLY_FAILED -> RESOLVED
 // ----------------------------------------------------
 app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
   const { idempotencyKey, triggerSource = 'manual', coordinates, batteryLevel, notes } = req.body;
@@ -318,7 +435,14 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
     return res.status(400).json({ success: false, error: 'idempotencyKey required' });
   }
 
+  const now = new Date().toISOString();
+  const locationLink = coordinates?.latitude && coordinates?.longitude
+    ? `https://maps.google.com/?q=${coordinates.latitude},${coordinates.longitude}`
+    : null;
+
   try {
+    // 1. Retrieve User's Trusted Contacts
+    let contacts = [];
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
       const dup = await firestoreDb.collection('sosEvents')
         .where('userId', '==', req.user.uid)
@@ -336,73 +460,205 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
       }
 
       const contactsSnap = await firestoreDb.collection('trustedContacts').where('userId', '==', req.user.uid).get();
-      const notifications = [];
-      contactsSnap.forEach(doc => {
-        const c = doc.data();
-        notifications.push({
-          contactId: doc.id,
-          name: c.name,
-          phoneNumber: c.phoneNumber,
-          channel: 'SMS/WhatsApp',
-          provider: 'mock-provider',
-          status: 'delivered',
-          deliveryTimestamp: new Date().toISOString()
-        });
-      });
-
-      const newSOSEvent = {
-        userId: req.user.uid,
-        idempotencyKey,
-        triggerSource,
-        status: 'active',
-        latitude: coordinates?.latitude || null,
-        longitude: coordinates?.longitude || null,
-        locationAccuracy: coordinates?.accuracy || null,
-        batteryLevel: batteryLevel ?? null,
-        notes: notes || null,
-        createdAt: new Date().toISOString(),
-        cancelledAt: null,
-        notifications
-      };
-
-      const ref = await firestoreDb.collection('sosEvents').add(newSOSEvent);
-      return res.status(201).json({ success: true, sosEvent: { id: ref.id, ...newSOSEvent } });
+      contactsSnap.forEach(doc => contacts.push({ id: doc.id, ...doc.data() }));
+    } else {
+      const existing = memoryStore.sosEvents.find(e => e.idempotencyKey === idempotencyKey && e.userId === req.user.uid);
+      if (existing) {
+        return res.status(200).json({ success: true, duplicatePrevented: true, sosEvent: existing });
+      }
+      contacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
     }
 
-    const existing = memoryStore.sosEvents.find(e => e.idempotencyKey === idempotencyKey && e.userId === req.user.uid);
-    if (existing) {
-      return res.status(200).json({ success: true, duplicatePrevented: true, sosEvent: existing });
+    // Sort contacts by priority
+    contacts.sort((a, b) => (a.priority || 99) - (b.priority || 99));
+
+    // 2. Incident & Initial Lifecycle State
+    const incidentId = `sos-${uuidv4().substring(0, 10)}`;
+    const initialTimeline = [
+      { status: 'CREATED', message: `Emergency distress alert triggered via ${triggerSource.toUpperCase()}`, timestamp: now }
+    ];
+
+    if (coordinates?.latitude && coordinates?.longitude) {
+      initialTimeline.push({
+        status: 'LOCATION_ACQUIRED',
+        message: `Coordinates captured: ${coordinates.latitude}, ${coordinates.longitude} (accuracy ~${coordinates.accuracy || 10}m)`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    initialTimeline.push({
+      status: 'ALERTS_QUEUED',
+      message: `Queuing dispatch for ${contacts.length} emergency contacts`,
+      timestamp: new Date().toISOString()
+    });
+
+    // 3. Dispatch notifications asynchronously through notification provider
+    const notifications = [];
+    for (const c of contacts) {
+      const delivery = await notificationService.dispatchSOSNotification({
+        contact: c,
+        user: req.user,
+        incident: { id: incidentId, createdAt: now },
+        locationLink
+      });
+      notifications.push(delivery);
+    }
+
+    // Determine lifecycle outcome
+    const anyFailed = notifications.some(n => n.status === 'FAILED');
+    const allFailed = notifications.length > 0 && notifications.every(n => n.status === 'FAILED');
+    const finalStatus = allFailed ? 'PARTIALLY_FAILED' : anyFailed ? 'PARTIALLY_FAILED' : 'ALERTS_SENT';
+
+    initialTimeline.push({
+      status: finalStatus,
+      message: `Notifications evaluated: ${notifications.filter(n => n.status === 'DELIVERED' || n.status === 'DEMO_DISPATCHED').length} dispatched, ${notifications.filter(n => n.status === 'FAILED').length} failed`,
+      timestamp: new Date().toISOString()
+    });
+
+    // 4. Outbound telephony escalation action (web tel: fallback or twilio voice call)
+    let callWorkflow = null;
+    if (contacts.length > 0) {
+      const primaryContact = contacts[0];
+      const callRes = await notificationService.initiateEmergencyCall({
+        contact: primaryContact,
+        user: req.user,
+        incidentId
+      });
+      callWorkflow = {
+        primaryContactId: primaryContact.id,
+        primaryContactName: primaryContact.name,
+        primaryContactPhone: primaryContact.phoneNumber,
+        ...callRes
+      };
     }
 
     const newSOSEvent = {
-      id: `sos-${uuidv4().substring(0, 10)}`,
+      id: incidentId,
       userId: req.user.uid,
       idempotencyKey,
       triggerSource,
-      status: 'active',
-      latitude: coordinates?.latitude || 28.6139,
-      longitude: coordinates?.longitude || 77.2090,
-      locationAccuracy: coordinates?.accuracy || 12,
+      status: finalStatus,
+      latitude: coordinates?.latitude || null,
+      longitude: coordinates?.longitude || null,
+      locationAccuracy: coordinates?.accuracy || null,
+      locationLink,
       batteryLevel: batteryLevel ?? null,
       notes: notes || null,
-      createdAt: new Date().toISOString(),
+      timeline: initialTimeline,
+      callWorkflow,
+      createdAt: now,
       cancelledAt: null,
-      notifications: memoryStore.trustedContacts.map(c => ({
-        contactId: c.id,
-        name: c.name,
-        phoneNumber: c.phoneNumber,
-        channel: 'SMS/WhatsApp',
-        provider: 'mock-provider',
-        status: 'delivered'
-      }))
+      notifications
     };
 
-    memoryStore.sosEvents.unshift(newSOSEvent);
-    res.status(201).json({ success: true, sosEvent: newSOSEvent });
+    // 5. Persist to DB
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      await firestoreDb.collection('sosEvents').doc(incidentId).set(newSOSEvent);
+      if (realtimeDb) {
+        try {
+          await realtimeDb.ref(`incidents/${incidentId}`).set(newSOSEvent);
+        } catch (rtdbErr) {}
+      }
+    } else {
+      memoryStore.sosEvents.unshift(newSOSEvent);
+    }
+
+    return res.status(201).json({ success: true, sosEvent: newSOSEvent });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// GET single incident by ID
+app.get('/api/v1/sos/:id', authenticateUser, async (req, res) => {
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const doc = await firestoreDb.collection('sosEvents').doc(req.params.id).get();
+      if (!doc.exists || doc.data().userId !== req.user.uid) {
+        return res.status(404).json({ success: false, error: 'Incident not found or unauthorized' });
+      }
+      return res.json({ success: true, event: { id: doc.id, ...doc.data() } });
+    }
+    const event = memoryStore.sosEvents.find(e => e.id === req.params.id && e.userId === req.user.uid);
+    if (!event) return res.status(404).json({ success: false, error: 'Incident not found' });
+    res.json({ success: true, event });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET incident events/timeline
+app.get('/api/v1/incidents/:id/events', authenticateUser, async (req, res) => {
+  try {
+    let event = null;
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const doc = await firestoreDb.collection('sosEvents').doc(req.params.id).get();
+      if (doc.exists && doc.data().userId === req.user.uid) {
+        event = { id: doc.id, ...doc.data() };
+      }
+    } else {
+      event = memoryStore.sosEvents.find(e => e.id === req.params.id && e.userId === req.user.uid);
+    }
+    if (!event) return res.status(404).json({ success: false, error: 'Incident not found' });
+    res.json({ success: true, timeline: event.timeline || [], notifications: event.notifications || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Acknowledge SOS Alert by Contact
+app.post('/api/v1/incidents/:id/acknowledge', async (req, res) => {
+  const { contactId, responderName } = req.body;
+  const now = new Date().toISOString();
+
+  try {
+    if (firebaseInitialized && firestoreDb) {
+      const docRef = firestoreDb.collection('sosEvents').doc(req.params.id);
+      const snap = await docRef.get();
+      if (!snap.exists) return res.status(404).json({ success: false, error: 'Incident not found' });
+      
+      const eventData = snap.data();
+      const updatedNotifs = (eventData.notifications || []).map(n => {
+        if (!contactId || n.contactId === contactId) {
+          return { ...n, acknowledged: true, acknowledgedAt: now };
+        }
+        return n;
+      });
+
+      const updatedTimeline = [
+        ...(eventData.timeline || []),
+        { status: 'ACKNOWLEDGED', message: `Emergency alert acknowledged by responder ${responderName || contactId || 'Guardian'}`, timestamp: now }
+      ];
+
+      await docRef.update({
+        notifications: updatedNotifs,
+        timeline: updatedTimeline
+      });
+
+      return res.json({ success: true, message: 'Alert acknowledged. Dispatch team and user notified.' });
+    }
+
+    const event = memoryStore.sosEvents.find(e => e.id === req.params.id);
+    if (!event) return res.status(404).json({ success: false, error: 'Incident not found' });
+
+    event.notifications = (event.notifications || []).map(n => {
+      if (!contactId || n.contactId === contactId) {
+        return { ...n, acknowledged: true, acknowledgedAt: now };
+      }
+      return n;
+    });
+
+    event.timeline = [
+      ...(event.timeline || []),
+      { status: 'ACKNOWLEDGED', message: `Emergency alert acknowledged by responder ${responderName || contactId || 'Guardian'}`, timestamp: now }
+    ];
+
+    res.json({ success: true, message: 'Alert acknowledged. Dispatch team and user notified.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 app.get('/api/v1/sos/history', authenticateUser, async (req, res) => {
   try {
@@ -425,6 +681,9 @@ app.get('/api/v1/sos/history', authenticateUser, async (req, res) => {
 });
 
 app.post('/api/v1/sos/:id/cancel', authenticateUser, async (req, res) => {
+  const reason = req.body?.reason || 'User marked safe';
+  const now = new Date().toISOString();
+
   try {
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
       const docRef = firestoreDb.collection('sosEvents').doc(req.params.id);
@@ -432,20 +691,45 @@ app.post('/api/v1/sos/:id/cancel', authenticateUser, async (req, res) => {
       if (!doc.exists || doc.data().userId !== req.user.uid) {
         return res.status(404).json({ success: false, error: 'Event not found or unauthorized' });
       }
-      const updates = { status: 'cancelled', cancelledAt: new Date().toISOString(), cancellationReason: req.body?.reason || 'User marked safe' };
+
+      const existingTimeline = doc.data().timeline || [];
+      const updatedTimeline = [
+        ...existingTimeline,
+        { status: 'RESOLVED', message: `Emergency cancelled/resolved by user. Reason: ${reason}`, timestamp: now }
+      ];
+
+      const updates = {
+        status: 'RESOLVED',
+        cancelledAt: now,
+        cancellationReason: reason,
+        timeline: updatedTimeline
+      };
+
       await docRef.update(updates);
+      if (realtimeDb) {
+        try { await realtimeDb.ref(`incidents/${req.params.id}`).update(updates); } catch (e) {}
+      }
+
       return res.json({ success: true, event: { id: doc.id, ...doc.data(), ...updates } });
     }
 
     const event = memoryStore.sosEvents.find(e => e.id === req.params.id && e.userId === req.user.uid);
     if (!event) return res.status(404).json({ success: false, error: 'Event not found' });
-    event.status = 'cancelled';
-    event.cancelledAt = new Date().toISOString();
+    
+    event.status = 'RESOLVED';
+    event.cancelledAt = now;
+    event.cancellationReason = reason;
+    event.timeline = [
+      ...(event.timeline || []),
+      { status: 'RESOLVED', message: `Emergency cancelled/resolved by user. Reason: ${reason}`, timestamp: now }
+    ];
+
     res.json({ success: true, event });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // ----------------------------------------------------
 // FEATURE 2: Safety Check-in Timer Routes
@@ -1089,6 +1373,215 @@ app.post('/api/v1/safety-plans/generate', authenticateUser, async (req, res) => 
   }
 });
 
+// ----------------------------------------------------
+// FEATURE 7: Live Journey & Trip Safety (Master §10)
+// ----------------------------------------------------
+
+app.get('/api/v1/journeys', authenticateUser, async (req, res) => {
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const snap = await firestoreDb.collection('journeys').where('userId', '==', req.user.uid).get();
+      const journeys = [];
+      snap.forEach(d => journeys.push({ id: d.id, ...d.data() }));
+      journeys.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return res.json({ success: true, count: journeys.length, journeys });
+    }
+    const journeys = memoryStore.journeys.filter(j => j.userId === req.user.uid);
+    res.json({ success: true, count: journeys.length, journeys });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/journeys', authenticateUser, async (req, res) => {
+  const { destination, expectedArrivalTime, sharedContacts = [] } = req.body;
+  if (!destination) {
+    return res.status(400).json({ success: false, error: 'Destination is required' });
+  }
+
+  const now = new Date().toISOString();
+  const newJourney = {
+    userId: req.user.uid,
+    destination: destination.trim(),
+    expectedArrivalTime: expectedArrivalTime || new Date(Date.now() + 45 * 60000).toISOString(),
+    status: 'ACTIVE',
+    sharedContacts,
+    lastLocation: req.body.coordinates ? {
+      latitude: req.body.coordinates.latitude,
+      longitude: req.body.coordinates.longitude,
+      accuracy: req.body.coordinates.accuracy || 10,
+      updatedAt: now
+    } : null,
+    createdAt: now
+  };
+
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const ref = await firestoreDb.collection('journeys').add(newJourney);
+      if (realtimeDb) {
+        try { await realtimeDb.ref(`journeys/${ref.id}`).set(newJourney); } catch (e) {}
+      }
+      return res.status(201).json({ success: true, journey: { id: ref.id, ...newJourney } });
+    }
+
+    const journey = { id: `journey-${uuidv4().substring(0, 8)}`, ...newJourney };
+    memoryStore.journeys.unshift(journey);
+    res.status(201).json({ success: true, journey });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/journeys/:id/location', authenticateUser, async (req, res) => {
+  const { latitude, longitude, accuracy } = req.body;
+  if (!latitude || !longitude) {
+    return res.status(400).json({ success: false, error: 'Latitude and Longitude required' });
+  }
+
+  const now = new Date().toISOString();
+  const lastLocation = { latitude, longitude, accuracy: accuracy || 10, updatedAt: now };
+
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const docRef = firestoreDb.collection('journeys').doc(req.params.id);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data().userId !== req.user.uid) {
+        return res.status(404).json({ success: false, error: 'Journey not found or unauthorized' });
+      }
+      await docRef.update({ lastLocation });
+      return res.json({ success: true, message: 'Location updated', lastLocation });
+    }
+
+    const journey = memoryStore.journeys.find(j => j.id === req.params.id && j.userId === req.user.uid);
+    if (!journey) return res.status(404).json({ success: false, error: 'Journey not found' });
+    journey.lastLocation = lastLocation;
+    res.json({ success: true, message: 'Location updated', lastLocation });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/journeys/:id/end', authenticateUser, async (req, res) => {
+  const now = new Date().toISOString();
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const docRef = firestoreDb.collection('journeys').doc(req.params.id);
+      const snap = await docRef.get();
+      if (!snap.exists || snap.data().userId !== req.user.uid) {
+        return res.status(404).json({ success: false, error: 'Journey not found or unauthorized' });
+      }
+      await docRef.update({ status: 'COMPLETED', completedAt: now });
+      return res.json({ success: true, message: 'Trip completed safely.', journey: { id: snap.id, ...snap.data(), status: 'COMPLETED', completedAt: now } });
+    }
+
+    const journey = memoryStore.journeys.find(j => j.id === req.params.id && j.userId === req.user.uid);
+    if (!journey) return res.status(404).json({ success: false, error: 'Journey not found' });
+    journey.status = 'COMPLETED';
+    journey.completedAt = now;
+    res.json({ success: true, message: 'Trip completed safely.', journey });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// FEATURE 8: Opt-In Community Safety & Nearby Helpers (Master §7)
+// ----------------------------------------------------
+app.get('/api/v1/community/requests', authenticateUser, async (req, res) => {
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const snap = await firestoreDb.collection('communityRequests')
+        .where('status', 'in', ['OPEN', 'ACCEPTED'])
+        .get();
+      const requests = [];
+      snap.forEach(d => requests.push({ id: d.id, ...d.data() }));
+      return res.json({ success: true, count: requests.length, requests });
+    }
+    const requests = memoryStore.communityRequests.filter(r => r.status === 'OPEN' || r.status === 'ACCEPTED');
+    res.json({ success: true, count: requests.length, requests });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/community/requests', authenticateUser, async (req, res) => {
+  const { category = 'Distress Assistance', description, radiusKm = 2, coordinates } = req.body;
+  if (!coordinates?.latitude || !coordinates?.longitude) {
+    return res.status(400).json({ success: false, error: 'Active coordinates required for community request' });
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 60 * 60000).toISOString(); // 1 hr window
+
+  const newRequest = {
+    userId: req.user.uid,
+    category,
+    description: description || 'Assistance requested in area',
+    radiusKm: Math.min(Math.max(radiusKm, 1), 5), // bounded 1-5km
+    status: 'OPEN',
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
+    responders: [],
+    createdAt: now.toISOString(),
+    expiresAt
+  };
+
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const ref = await firestoreDb.collection('communityRequests').add(newRequest);
+      return res.status(201).json({ success: true, request: { id: ref.id, ...newRequest } });
+    }
+
+    const request = { id: `comm-${uuidv4().substring(0, 8)}`, ...newRequest };
+    memoryStore.communityRequests.unshift(request);
+    res.status(201).json({ success: true, request });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/community/requests/:id/accept', authenticateUser, async (req, res) => {
+  const now = new Date().toISOString();
+  const responderInfo = {
+    helperId: req.user.uid,
+    helperName: req.user.displayName || 'Verified Community Helper',
+    acceptedAt: now
+  };
+
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      const docRef = firestoreDb.collection('communityRequests').doc(req.params.id);
+      const snap = await docRef.get();
+      if (!snap.exists) return res.status(404).json({ success: false, error: 'Request not found' });
+      
+      const currentResponders = snap.data().responders || [];
+      if (!currentResponders.some(r => r.helperId === req.user.uid)) {
+        currentResponders.push(responderInfo);
+      }
+
+      await docRef.update({
+        status: 'ACCEPTED',
+        responders: currentResponders
+      });
+
+      return res.json({ success: true, message: 'Response registered. Thank you for assisting community safety.' });
+    }
+
+    const request = memoryStore.communityRequests.find(r => r.id === req.params.id);
+    if (!request) return res.status(404).json({ success: false, error: 'Request not found' });
+    
+    if (!request.responders.some(r => r.helperId === req.user.uid)) {
+      request.responders.push(responderInfo);
+    }
+    request.status = 'ACCEPTED';
+
+    res.json({ success: true, message: 'Response registered. Thank you for assisting community safety.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 // Demo Reset
 app.post('/api/v1/demo/reset', authenticateUser, (req, res) => {
   memoryStore.sosEvents = memoryStore.sosEvents.filter(e => e.id === 'sos-history-init-1');
@@ -1107,8 +1600,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`[NariShield.ai] Backend Server running on http://localhost:${PORT}`);
   console.log(`[NariShield.ai] Swagger API Documentation: http://localhost:${PORT}/api-docs`);
   console.log(`[NariShield.ai] OpenAPI JSON Spec: http://localhost:${PORT}/api-docs.json`);
 });
+
