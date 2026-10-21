@@ -37,8 +37,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
-// Explicitly handle all preflight OPTIONS requests before any routing logic
-app.options('*', cors());
+// Express 5 already handles all OPTIONS preflights automatically when cors() is mounted via app.use()
 
 app.use(express.json());
 app.use(morgan('dev'));
