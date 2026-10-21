@@ -1,4 +1,6 @@
-import admin from 'firebase-admin';
+import { initializeApp, getApps, cert, applicationDefault } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -12,35 +14,45 @@ try {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  const databaseURL = process.env.FIREBASE_DATABASE_URL;
 
   if (projectId && clientEmail && privateKey) {
-    // Unescape newlines if needed
     if (privateKey.includes('\\n')) {
       privateKey = privateKey.replace(/\\n/g, '\n');
     }
 
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert({
+    const apps = getApps();
+    let app;
+    if (!apps.length) {
+      app = initializeApp({
+        credential: cert({
           projectId,
           clientEmail,
           privateKey
-        })
+        }),
+        ...(databaseURL ? { databaseURL } : {})
       });
+    } else {
+      app = apps[0];
     }
 
-    firestoreDb = admin.firestore();
-    firebaseAuth = admin.auth();
+    firestoreDb = getFirestore(app);
+    firebaseAuth = getAuth(app);
     firebaseInitialized = true;
     console.log(`[Firebase Admin] Successfully connected to Firebase project: ${projectId}`);
   } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault()
+    const apps = getApps();
+    let app;
+    if (!apps.length) {
+      app = initializeApp({
+        credential: applicationDefault(),
+        ...(databaseURL ? { databaseURL } : {})
       });
+    } else {
+      app = apps[0];
     }
-    firestoreDb = admin.firestore();
-    firebaseAuth = admin.auth();
+    firestoreDb = getFirestore(app);
+    firebaseAuth = getAuth(app);
     firebaseInitialized = true;
     console.log('[Firebase Admin] Connected using GOOGLE_APPLICATION_CREDENTIALS');
   } else {
@@ -52,4 +64,4 @@ try {
   console.warn('[Firebase Admin] Initialization failed:', err.message);
 }
 
-export { admin, firestoreDb, firebaseAuth, firebaseInitialized, initError };
+export { firestoreDb, firebaseAuth, firebaseInitialized, initError };
