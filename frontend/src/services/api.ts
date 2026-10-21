@@ -1,7 +1,9 @@
 import type { UserProfile, TrustedContact, SOSEvent } from '../types';
 import { auth } from '../firebase';
 
-const API_BASE = '/api/v1';
+const BACKEND_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api/v1` : '/api/v1';
+export { BACKEND_URL, API_BASE };
 
 const getHeaders = async () => {
   let token = 'demo-token';

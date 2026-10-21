@@ -14,7 +14,7 @@ import {
   Navigation,
   Sparkles
 } from 'lucide-react';
-import { api } from './services/api';
+import { api, BACKEND_URL } from './services/api';
 import type { UserProfile, TrustedContact, SOSEvent } from './types';
 import { SafetyMap } from './components/SafetyMap';
 import { ContactManager } from './components/ContactManager';
@@ -31,6 +31,7 @@ import { auth, signOut, onAuthStateChanged, type User } from './firebase';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const apiDocUrl = BACKEND_URL || 'http://localhost:5000';
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [contacts, setContacts] = useState<TrustedContact[]>([]);
@@ -243,7 +244,7 @@ export function App() {
             )}
 
             <a
-              href="http://localhost:5000/api-docs"
+              href={`${apiDocUrl}/api-docs`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg border border-slate-700 transition"
@@ -538,13 +539,13 @@ export function App() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-3">
           <p>© 2026 NariShield.ai Smart Women's Safety Web Platform. All rights reserved.</p>
           <div className="flex items-center gap-4">
-            <a href="http://localhost:5000/api-docs" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
+            <a href={`${apiDocUrl}/api-docs`} target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
               API Docs (/api-docs)
             </a>
-            <a href="http://localhost:5000/api-docs.json" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
+            <a href={`${apiDocUrl}/api-docs.json`} target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
               OpenAPI Spec (/api-docs.json)
             </a>
-            <a href="http://localhost:5000/api/v1/health" target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
+            <a href={`${apiDocUrl}/api/v1/health`} target="_blank" rel="noopener noreferrer" className="hover:text-slate-800">
               Health Check (/api/v1/health)
             </a>
           </div>
