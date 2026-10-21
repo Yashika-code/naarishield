@@ -454,7 +454,7 @@ export function App() {
                     <div className="flex justify-between items-center p-2 rounded-lg bg-slate-50 border border-slate-100">
                       <span className="text-slate-600">Active User:</span>
                       <span className="font-medium text-slate-900">
-                        {profile?.displayName || profile?.name || currentUser?.displayName || 'Aanya Sharma'}
+                        {currentUser?.displayName || currentUser?.email || profile?.displayName || 'Guest User (Not Signed In)'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center p-2 rounded-lg bg-slate-50 border border-slate-100">

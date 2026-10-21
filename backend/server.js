@@ -42,128 +42,15 @@ app.use(cors({
 app.use(express.json());
 app.use(morgan('dev'));
 
-// In-Memory Database store with extended safety models
+// In-Memory Database store with extended safety models (starts completely empty)
 let memoryStore = {
-  users: {
-    'user-demo-1': {
-      uid: 'user-demo-1',
-      displayName: 'Aanya Sharma',
-      email: 'aanya.sharma@example.com',
-      phoneNumber: '+919876543210',
-      isDemo: true,
-      preferences: {
-        voiceTriggerEnabled: true,
-        smsAlerts: true,
-        whatsappAlerts: true,
-        locationHighAccuracy: true,
-      },
-      createdAt: '2026-10-01T10:00:00.000Z',
-      updatedAt: '2026-10-01T10:00:00.000Z'
-    }
-  },
-  trustedContacts: [
-    {
-      id: 'contact-1',
-      userId: 'user-demo-1',
-      name: 'Pooja Sharma (Mother)',
-      phoneNumber: '+919811223344',
-      relationship: 'Parent',
-      priority: 1,
-      createdAt: '2026-10-01T10:15:00.000Z',
-      updatedAt: '2026-10-01T10:15:00.000Z'
-    },
-    {
-      id: 'contact-2',
-      userId: 'user-demo-1',
-      name: 'Rohan Verma (Brother)',
-      phoneNumber: '+919822334455',
-      relationship: 'Sibling',
-      priority: 2,
-      createdAt: '2026-10-02T14:30:00.000Z',
-      updatedAt: '2026-10-02T14:30:00.000Z'
-    }
-  ],
-  sosEvents: [
-    {
-      id: 'sos-history-init-1',
-      userId: 'user-demo-1',
-      idempotencyKey: 'init-demo-key-01',
-      triggerSource: 'manual',
-      status: 'resolved',
-      latitude: 28.6139,
-      longitude: 77.2090,
-      locationAccuracy: 12.5,
-      createdAt: '2026-10-18T22:15:00.000Z',
-      cancelledAt: '2026-10-18T22:25:00.000Z',
-      notifications: [
-        { contactId: 'contact-1', name: 'Pooja Sharma', phone: '+919811223344', channel: 'SMS', status: 'delivered', provider: 'mock' }
-      ]
-    }
-  ],
-  checkIns: [
-    {
-      id: 'checkin-init-1',
-      userId: 'user-demo-1',
-      durationMinutes: 30,
-      destination: 'Central Metro Station',
-      notes: 'Cab DL01AZ4421',
-      status: 'completed',
-      notifyOnMissed: true,
-      expiresAt: '2026-10-21T21:00:00.000Z',
-      createdAt: '2026-10-21T20:30:00.000Z',
-      confirmedAt: '2026-10-21T20:55:00.000Z'
-    }
-  ],
-  incidentReports: [
-    {
-      id: 'inc-demo-1',
-      userId: 'user-demo-1',
-      title: 'Suspicious vehicle tailgating',
-      category: 'Stalking',
-      incidentDate: '2026-10-20T21:30:00.000Z',
-      description: 'Silver sedan followed on Link Road for 1.5 km before turning away at the police post.',
-      location: 'Link Road, Sector 14',
-      reportedToAuthorities: false,
-      notes: 'License plate partial: HR26',
-      createdAt: '2026-10-20T22:00:00.000Z'
-    }
-  ],
-  safetyCircle: [
-    {
-      id: 'circle-1',
-      userId: 'user-demo-1',
-      contactName: 'Neha Sen',
-      contactEmail: 'neha.sen@example.com',
-      status: 'accepted',
-      shareLiveLocation: false,
-      shareJourneyStatus: true,
-      shareSosAlerts: true,
-      createdAt: '2026-10-10T12:00:00.000Z'
-    }
-  ],
-  safetyPlans: [
-    {
-      id: 'plan-demo-1',
-      userId: 'user-demo-1',
-      journeyType: 'Night Commute',
-      destination: 'Connaught Place',
-      departureTime: '21:30',
-      transportMode: 'Metro / Public Transit',
-      checklist: [
-        'Confirm emergency contacts are registered with active battery level',
-        'Stay in populated front coach of metro near driver cabin',
-        'Set 20m Safety Check-in Timer before boarding train',
-        'Verify GPS accuracy on live map'
-      ],
-      recommendations: [
-        'Avoid dimly lit exit gates 3 and 7 after 21:00',
-        'Keep phone in accessible pocket, not buried in bag',
-        'Use pre-paid transit smartcard to avoid standing at recharge kiosk'
-      ],
-      isAiGenerated: true,
-      createdAt: '2026-10-20T10:00:00.000Z'
-    }
-  ]
+  users: {},
+  trustedContacts: [],
+  sosEvents: [],
+  checkIns: [],
+  incidentReports: [],
+  safetyCircle: [],
+  safetyPlans: []
 };
 
 // Periodic Background Worker to mark expired check-ins as 'missed'
@@ -202,7 +89,7 @@ setInterval(async () => {
 const authenticateUser = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    req.user = { uid: 'user-demo-1', email: 'aanya.sharma@example.com', isDemo: true };
+    req.user = { uid: 'guest-user', email: 'guest@narishield.ai', isDemo: true };
     return next();
   }
 
@@ -212,7 +99,7 @@ const authenticateUser = async (req, res, next) => {
   }
 
   if (token === 'demo-token' || token.startsWith('demo-')) {
-    req.user = { uid: 'user-demo-1', email: 'aanya.sharma@example.com', isDemo: true };
+    req.user = { uid: 'guest-user', email: 'guest@narishield.ai', isDemo: true };
     return next();
   }
 
@@ -235,7 +122,7 @@ const authenticateUser = async (req, res, next) => {
     }
   }
 
-  req.user = { uid: 'user-demo-1', email: 'aanya.sharma@example.com', isDemo: true };
+  req.user = { uid: 'guest-user', email: 'guest@narishield.ai', isDemo: true };
   next();
 };
 
