@@ -871,15 +871,47 @@ const verifiedEmergencyDirectory = [
   }
 ];
 
+// Haversine formula to compute distance in km
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c).toFixed(1));
+}
+
 app.get('/api/v1/resources/nearby', (req, res) => {
-  const { type } = req.query;
-  let results = verifiedEmergencyDirectory;
+  const { type, lat, lng } = req.query;
+  const userLat = lat ? parseFloat(lat) : null;
+  const userLng = lng ? parseFloat(lng) : null;
+
+  let results = verifiedEmergencyDirectory.map(r => {
+    if (userLat && userLng) {
+      return {
+        ...r,
+        distanceKm: calculateDistanceKm(userLat, userLng, r.latitude, r.longitude)
+      };
+    }
+    return r;
+  });
+
   if (type && type !== 'all') {
     results = results.filter(r => r.type === type);
   }
+
+  // Sort by nearest distance when coordinates are provided
+  if (userLat && userLng) {
+    results.sort((a, b) => (a.distanceKm || 999) - (b.distanceKm || 999));
+  }
+
   res.json({
     success: true,
     count: results.length,
+    userLocation: userLat && userLng ? { latitude: userLat, longitude: userLng } : null,
     source: 'National Women Helpline (1091/112) & State Emergency Directory',
     lastVerified: '2026-10-01T00:00:00.000Z',
     resources: results

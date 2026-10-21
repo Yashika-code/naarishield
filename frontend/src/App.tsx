@@ -506,7 +506,7 @@ export function App() {
         {/* Tab 5: Feature 5: Nearby Emergency Resources */}
         {activeTab === 'resources' && (
           <div className="max-w-4xl mx-auto">
-            <EmergencyResources />
+            <EmergencyResources coordinates={coordinates} />
           </div>
         )}
 

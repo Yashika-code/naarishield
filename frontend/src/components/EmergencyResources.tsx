@@ -15,7 +15,15 @@ export interface EmergencyResource {
   hours: string;
 }
 
-export const EmergencyResources: React.FC = () => {
+interface EmergencyResourcesProps {
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+  } | null;
+}
+
+export const EmergencyResources: React.FC<EmergencyResourcesProps> = ({ coordinates }) => {
   const [resources, setResources] = useState<EmergencyResource[]>([]);
   const [selectedType, setSelectedType] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -24,7 +32,9 @@ export const EmergencyResources: React.FC = () => {
   const fetchResources = async () => {
     try {
       setLoading(true);
-      const res = await api.getNearbyResources(28.6139, 77.2090, selectedType);
+      const lat = coordinates?.latitude ?? 28.6139;
+      const lng = coordinates?.longitude ?? 77.2090;
+      const res = await api.getNearbyResources(lat, lng, selectedType);
       if (res.success) {
         setResources(res.resources || []);
       }
@@ -37,7 +47,7 @@ export const EmergencyResources: React.FC = () => {
 
   useEffect(() => {
     fetchResources();
-  }, [selectedType]);
+  }, [selectedType, coordinates?.latitude, coordinates?.longitude]);
 
   const filtered = resources.filter(r =>
     r.name.toLowerCase().includes(search.toLowerCase()) ||
