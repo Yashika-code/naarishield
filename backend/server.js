@@ -15,10 +15,31 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
+// Robust CORS configuration supporting Vercel and preflight OPTIONS requests
+const allowedOrigins = [
+  'https://naarishield-two.vercel.app',
+  FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:3000'
+];
+
 app.use(cors({
-  origin: true, // Allow requesting origin automatically (handles deployed URLs on Render/Vercel)
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, postman) or matching any vercel/render preview
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Fallback allow all origins to ensure API usability
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
+
+// Explicitly handle all preflight OPTIONS requests before any routing logic
+app.options('*', cors());
+
 app.use(express.json());
 app.use(morgan('dev'));
 
