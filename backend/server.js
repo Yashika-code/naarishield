@@ -238,7 +238,10 @@ app.get('/api/v1/contacts', authenticateUser, async (req, res) => {
         console.warn('[Firestore] Contacts read failed, falling back to local session store:', dbErr.message);
       }
     }
-    const userContacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
+    let userContacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
+    if (userContacts.length === 0 && memoryStore.trustedContacts.length > 0) {
+      userContacts = memoryStore.trustedContacts;
+    }
     userContacts.sort((a, b) => (a.priority || 99) - (b.priority || 99));
     res.json({ success: true, count: userContacts.length, contacts: userContacts });
   } catch (err) {
@@ -520,14 +523,15 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
         contactsSnap.forEach(doc => contacts.push({ id: doc.id, ...doc.data() }));
       } catch (dbErr) {
         console.warn('[Firestore] SOS contacts read failed, falling back to memoryStore:', dbErr.message);
-        contacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
       }
-    } else {
-      const existing = memoryStore.sosEvents.find(e => e.idempotencyKey === idempotencyKey && e.userId === req.user.uid);
-      if (existing) {
-        return res.status(200).json({ success: true, duplicatePrevented: true, sosEvent: existing });
-      }
+    }
+
+    // Always ensure user's contacts from memoryStore are merged if firestore was empty or errored
+    if (contacts.length === 0) {
       contacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
+    }
+    if (contacts.length === 0 && memoryStore.trustedContacts.length > 0) {
+      contacts = memoryStore.trustedContacts;
     }
 
     // Sort contacts by priority
@@ -899,8 +903,14 @@ app.post('/api/v1/check-ins', authenticateUser, async (req, res) => {
 
   try {
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      const ref = await firestoreDb.collection('checkIns').add(newRecord);
-      return res.status(201).json({ success: true, checkIn: { id: ref.id, ...newRecord } });
+      try {
+        const ref = await firestoreDb.collection('checkIns').add(newRecord);
+        const createdCheckIn = { id: ref.id, ...newRecord };
+        memoryStore.checkIns.unshift(createdCheckIn);
+        return res.status(201).json({ success: true, checkIn: createdCheckIn });
+      } catch (dbErr) {
+        console.warn('[Firestore] checkIn add failed, fallback to memoryStore:', dbErr.message);
+      }
     }
 
     const checkIn = { id: `checkin-${uuidv4().substring(0, 8)}`, ...newRecord };
@@ -1535,11 +1545,17 @@ app.post('/api/v1/journeys', authenticateUser, async (req, res) => {
 
   try {
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      const ref = await firestoreDb.collection('journeys').add(newJourney);
-      if (realtimeDb) {
-        try { await realtimeDb.ref(`journeys/${ref.id}`).set(newJourney); } catch (e) {}
+      try {
+        const ref = await firestoreDb.collection('journeys').add(newJourney);
+        if (realtimeDb) {
+          try { await realtimeDb.ref(`journeys/${ref.id}`).set(newJourney); } catch (e) {}
+        }
+        const createdJourney = { id: ref.id, ...newJourney };
+        memoryStore.journeys.unshift(createdJourney);
+        return res.status(201).json({ success: true, journey: createdJourney });
+      } catch (dbErr) {
+        console.warn('[Firestore] journeys add failed, fallback to memoryStore:', dbErr.message);
       }
-      return res.status(201).json({ success: true, journey: { id: ref.id, ...newJourney } });
     }
 
     const journey = { id: `journey-${uuidv4().substring(0, 8)}`, ...newJourney };

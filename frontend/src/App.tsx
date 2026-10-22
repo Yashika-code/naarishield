@@ -619,6 +619,7 @@ export function App() {
         onClose={() => setIsSOSModalOpen(false)}
         onConfirmTrigger={handleTriggerSOS}
         activeEvent={activeSOS}
+        contacts={contacts}
         onCancelActiveSOS={handleCancelSOS}
       />
 
