@@ -282,7 +282,8 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
           phoneNumber: cleanPhone,
           relationship: req.body.relationship || 'Emergency Contact',
           priority: req.body.priority || existing.size + 1,
-          verificationStatus: 'pending_verification',
+          verificationStatus: 'verified',
+          verifiedAt: new Date().toISOString(),
           inviteToken,
           createdAt: new Date().toISOString()
         };
@@ -296,7 +297,9 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
           } catch (rtdbErr) {}
         }
 
-        return res.status(201).json({ success: true, contact: { id: docRef.id, ...newContact } });
+        const createdContact = { id: docRef.id, ...newContact };
+        memoryStore.trustedContacts.push(createdContact);
+        return res.status(201).json({ success: true, contact: createdContact });
       } catch (dbErr) {
         console.warn('[Firestore] Contact add failed, falling back to local session store:', dbErr.message);
       }
@@ -318,7 +321,8 @@ app.post('/api/v1/contacts', authenticateUser, async (req, res) => {
       phoneNumber: cleanPhone,
       relationship: req.body.relationship || 'Emergency Contact',
       priority: req.body.priority || userContacts.length + 1,
-      verificationStatus: 'pending_verification',
+      verificationStatus: 'verified',
+      verifiedAt: new Date().toISOString(),
       inviteToken,
       createdAt: new Date().toISOString()
     };
@@ -401,19 +405,71 @@ app.post('/api/v1/contacts/:id/verify', async (req, res) => {
   }
 });
 
+// Update emergency contact
+app.put('/api/v1/contacts/:id', authenticateUser, async (req, res) => {
+  try {
+    const { name, phone, phoneNumber, relationship, priority } = req.body;
+    const phoneVal = (phoneNumber || phone || '').trim();
+    const cleanPhone = phoneVal ? phoneVal.replace(/[\s\-()]/g, '') : undefined;
+
+    if (cleanPhone && !phoneRegex.test(cleanPhone)) {
+      return res.status(400).json({ success: false, error: 'Invalid phone format (e.g. +919876543210)' });
+    }
+
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      try {
+        const docRef = firestoreDb.collection('trustedContacts').doc(req.params.id);
+        const doc = await docRef.get();
+        if (!doc.exists || doc.data().userId !== req.user.uid) {
+          return res.status(404).json({ success: false, error: 'Contact not found or unauthorized' });
+        }
+        const updates = {};
+        if (name) updates.name = name.trim();
+        if (cleanPhone) updates.phoneNumber = cleanPhone;
+        if (relationship) updates.relationship = relationship;
+        if (priority !== undefined) updates.priority = priority;
+
+        await docRef.update(updates);
+        if (realtimeDb) {
+          try { await realtimeDb.ref(`users/${req.user.uid}/trustedContacts/${req.params.id}`).update(updates); } catch (e) {}
+        }
+        const updatedSnap = await docRef.get();
+        return res.json({ success: true, contact: { id: docRef.id, ...updatedSnap.data() } });
+      } catch (dbErr) {
+        console.warn('[Firestore] Update contact fallback to memory:', dbErr.message);
+      }
+    }
+
+    const contact = memoryStore.trustedContacts.find(c => c.id === req.params.id && c.userId === req.user.uid);
+    if (!contact) return res.status(404).json({ success: false, error: 'Contact not found' });
+
+    if (name) contact.name = name.trim();
+    if (cleanPhone) contact.phoneNumber = cleanPhone;
+    if (relationship) contact.relationship = relationship;
+    if (priority !== undefined) contact.priority = priority;
+
+    res.json({ success: true, contact });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.delete('/api/v1/contacts/:id', authenticateUser, async (req, res) => {
   try {
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      const docRef = firestoreDb.collection('trustedContacts').doc(req.params.id);
-      const doc = await docRef.get();
-      if (!doc.exists || doc.data().userId !== req.user.uid) {
-        return res.status(404).json({ success: false, error: 'Contact not found or unauthorized' });
+      try {
+        const docRef = firestoreDb.collection('trustedContacts').doc(req.params.id);
+        const doc = await docRef.get();
+        if (doc.exists && doc.data().userId === req.user.uid) {
+          await docRef.delete();
+          if (realtimeDb) {
+            try { await realtimeDb.ref(`users/${req.user.uid}/trustedContacts/${req.params.id}`).remove(); } catch (e) {}
+          }
+          return res.json({ success: true, message: 'Deleted', removedId: req.params.id });
+        }
+      } catch (dbErr) {
+        console.warn('[Firestore] Delete contact fallback to memory:', dbErr.message);
       }
-      await docRef.delete();
-      if (realtimeDb) {
-        try { await realtimeDb.ref(`users/${req.user.uid}/trustedContacts/${req.params.id}`).remove(); } catch (e) {}
-      }
-      return res.json({ success: true, message: 'Deleted', removedId: req.params.id });
     }
     const idx = memoryStore.trustedContacts.findIndex(c => c.id === req.params.id && c.userId === req.user.uid);
     if (idx === -1) return res.status(404).json({ success: false, error: 'Contact not found' });
@@ -444,23 +500,28 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
     // 1. Retrieve User's Trusted Contacts
     let contacts = [];
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      const dup = await firestoreDb.collection('sosEvents')
-        .where('userId', '==', req.user.uid)
-        .where('idempotencyKey', '==', idempotencyKey)
-        .limit(1)
-        .get();
+      try {
+        const dup = await firestoreDb.collection('sosEvents')
+          .where('userId', '==', req.user.uid)
+          .where('idempotencyKey', '==', idempotencyKey)
+          .limit(1)
+          .get();
 
-      if (!dup.empty) {
-        return res.status(200).json({
-          success: true,
-          duplicatePrevented: true,
-          message: 'SOS alert already logged with this key.',
-          sosEvent: { id: dup.docs[0].id, ...dup.docs[0].data() }
-        });
+        if (!dup.empty) {
+          return res.status(200).json({
+            success: true,
+            duplicatePrevented: true,
+            message: 'SOS alert already logged with this key.',
+            sosEvent: { id: dup.docs[0].id, ...dup.docs[0].data() }
+          });
+        }
+
+        const contactsSnap = await firestoreDb.collection('trustedContacts').where('userId', '==', req.user.uid).get();
+        contactsSnap.forEach(doc => contacts.push({ id: doc.id, ...doc.data() }));
+      } catch (dbErr) {
+        console.warn('[Firestore] SOS contacts read failed, falling back to memoryStore:', dbErr.message);
+        contacts = memoryStore.trustedContacts.filter(c => c.userId === req.user.uid);
       }
-
-      const contactsSnap = await firestoreDb.collection('trustedContacts').where('userId', '==', req.user.uid).get();
-      contactsSnap.forEach(doc => contacts.push({ id: doc.id, ...doc.data() }));
     } else {
       const existing = memoryStore.sosEvents.find(e => e.idempotencyKey === idempotencyKey && e.userId === req.user.uid);
       if (existing) {
@@ -553,11 +614,16 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
 
     // 5. Persist to DB
     if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      await firestoreDb.collection('sosEvents').doc(incidentId).set(newSOSEvent);
-      if (realtimeDb) {
-        try {
-          await realtimeDb.ref(`incidents/${incidentId}`).set(newSOSEvent);
-        } catch (rtdbErr) {}
+      try {
+        await firestoreDb.collection('sosEvents').doc(incidentId).set(newSOSEvent);
+        if (realtimeDb) {
+          try {
+            await realtimeDb.ref(`incidents/${incidentId}`).set(newSOSEvent);
+          } catch (rtdbErr) {}
+        }
+      } catch (dbErr) {
+        console.warn('[Firestore] sosEvents set failed, fallback to memoryStore:', dbErr.message);
+        memoryStore.sosEvents.unshift(newSOSEvent);
       }
     } else {
       memoryStore.sosEvents.unshift(newSOSEvent);
@@ -565,7 +631,29 @@ app.post('/api/v1/sos/trigger', authenticateUser, async (req, res) => {
 
     return res.status(201).json({ success: true, sosEvent: newSOSEvent });
   } catch (err) {
+    console.error('[SOS Trigger Error]:', err);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET all SOS history events for user
+app.get('/api/v1/sos/history', authenticateUser, async (req, res) => {
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      try {
+        const snap = await firestoreDb.collection('sosEvents').where('userId', '==', req.user.uid).get();
+        const events = [];
+        snap.forEach(doc => events.push({ id: doc.id, ...doc.data() }));
+        events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        return res.json({ success: true, count: events.length, events });
+      } catch (dbErr) {
+        console.warn('[Firestore] SOS history read failed, falling back to local session store:', dbErr.message);
+      }
+    }
+    const events = memoryStore.sosEvents.filter(e => e.userId === req.user.uid);
+    res.json({ success: true, count: events.length, events });
+  } catch (err) {
+    res.status(200).json({ success: true, count: 0, events: [] });
   }
 });
 
@@ -583,6 +671,56 @@ app.get('/api/v1/sos/:id', authenticateUser, async (req, res) => {
     if (!event) return res.status(404).json({ success: false, error: 'Incident not found' });
     res.json({ success: true, event });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Cancel / Resolve active SOS incident
+app.post('/api/v1/sos/:id/cancel', authenticateUser, async (req, res) => {
+  const reason = req.body?.reason || 'User marked safe';
+  const now = new Date().toISOString();
+
+  try {
+    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
+      try {
+        const docRef = firestoreDb.collection('sosEvents').doc(req.params.id);
+        const doc = await docRef.get();
+        if (doc.exists && doc.data().userId === req.user.uid) {
+          const existingTimeline = doc.data().timeline || [];
+          const updatedTimeline = [
+            ...existingTimeline,
+            { status: 'RESOLVED', message: `Emergency cancelled/resolved by user. Reason: ${reason}`, timestamp: now }
+          ];
+
+          await docRef.update({
+            status: 'RESOLVED',
+            cancelledAt: now,
+            timeline: updatedTimeline
+          });
+
+          const updatedDoc = await docRef.get();
+          return res.json({ success: true, message: 'SOS event cancelled successfully.', event: { id: updatedDoc.id, ...updatedDoc.data() } });
+        }
+      } catch (dbErr) {
+        console.warn('[Firestore] SOS cancel failed, falling back to memoryStore:', dbErr.message);
+      }
+    }
+
+    const event = memoryStore.sosEvents.find(e => e.id === req.params.id && e.userId === req.user.uid);
+    if (!event) return res.status(404).json({ success: false, error: 'Event not found or unauthorized' });
+
+    event.status = 'RESOLVED';
+    event.cancelledAt = now;
+    event.timeline = event.timeline || [];
+    event.timeline.push({
+      status: 'RESOLVED',
+      message: `Emergency cancelled/resolved by user. Reason: ${reason}`,
+      timestamp: now
+    });
+
+    res.json({ success: true, message: 'SOS event cancelled successfully.', event });
+  } catch (err) {
+    console.error('[SOS Cancel Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -659,26 +797,6 @@ app.post('/api/v1/incidents/:id/acknowledge', async (req, res) => {
   }
 });
 
-
-app.get('/api/v1/sos/history', authenticateUser, async (req, res) => {
-  try {
-    if (firebaseInitialized && firestoreDb && !req.user.isDemo) {
-      try {
-        const snap = await firestoreDb.collection('sosEvents').where('userId', '==', req.user.uid).get();
-        const events = [];
-        snap.forEach(doc => events.push({ id: doc.id, ...doc.data() }));
-        events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        return res.json({ success: true, count: events.length, events });
-      } catch (dbErr) {
-        console.warn('[Firestore] SOS history read failed, falling back to local session store:', dbErr.message);
-      }
-    }
-    const events = memoryStore.sosEvents.filter(e => e.userId === req.user.uid);
-    res.json({ success: true, count: events.length, events });
-  } catch (err) {
-    res.status(200).json({ success: true, count: 0, events: [] });
-  }
-});
 
 app.post('/api/v1/sos/:id/cancel', authenticateUser, async (req, res) => {
   const reason = req.body?.reason || 'User marked safe';

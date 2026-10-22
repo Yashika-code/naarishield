@@ -10,12 +10,18 @@ interface VoiceTriggerProps {
 
 const EMERGENCY_KEYWORDS = [
   'bachao',
+  'बचाओ',
   'help me',
   'help',
+  'मदद',
+  'madad',
   'mujhe bachao',
+  'mujhe madad chahiye',
   'emergency',
+  'इमरजेंसी',
   'save me',
-  'police'
+  'police',
+  'पुलिस'
 ];
 
 export const VoiceTrigger: React.FC<VoiceTriggerProps> = ({
@@ -29,6 +35,22 @@ export const VoiceTrigger: React.FC<VoiceTriggerProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [matchedKeyword, setMatchedKeyword] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+
+  const isEnabledRef = useRef(isEnabled);
+  const onTriggerSOSRef = useRef(onTriggerSOS);
+  const onToggleRef = useRef(onToggle);
+
+  useEffect(() => {
+    isEnabledRef.current = isEnabled;
+  }, [isEnabled]);
+
+  useEffect(() => {
+    onTriggerSOSRef.current = onTriggerSOS;
+  }, [onTriggerSOS]);
+
+  useEffect(() => {
+    onToggleRef.current = onToggle;
+  }, [onToggle]);
 
   useEffect(() => {
     // Check Web Speech API Support
@@ -54,15 +76,20 @@ export const VoiceTrigger: React.FC<VoiceTriggerProps> = ({
       recognition.onresult = (event: any) => {
         let transcript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript.toLowerCase();
+          transcript += ' ' + event.results[i][0].transcript.toLowerCase();
         }
-        setRecognizedText(transcript);
+        transcript = transcript.trim();
+        if (transcript) {
+          setRecognizedText(transcript);
+        }
 
         // Check for keyword matches
         for (const kw of EMERGENCY_KEYWORDS) {
           if (transcript.includes(kw)) {
             setMatchedKeyword(kw);
-            onTriggerSOS();
+            if (onTriggerSOSRef.current) {
+              onTriggerSOSRef.current();
+            }
             break;
           }
         }
@@ -72,7 +99,7 @@ export const VoiceTrigger: React.FC<VoiceTriggerProps> = ({
         if (event.error === 'not-allowed') {
           setErrorMessage('Microphone access denied by browser. Please grant mic permissions.');
           setIsListening(false);
-          onToggle(false);
+          if (onToggleRef.current) onToggleRef.current(false);
         } else if (event.error !== 'no-speech') {
           console.warn('[Speech Recognition] Error:', event.error);
         }
@@ -80,9 +107,9 @@ export const VoiceTrigger: React.FC<VoiceTriggerProps> = ({
 
       recognition.onend = () => {
         // If still enabled by user, restart listening
-        if (isEnabled && recognitionRef.current) {
+        if (isEnabledRef.current && recognitionRef.current) {
           try {
-            recognition.start();
+            recognitionRef.current.start();
           } catch (e) {}
         } else {
           setIsListening(false);

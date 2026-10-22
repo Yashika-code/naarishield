@@ -131,18 +131,43 @@ export function App() {
 
   const handleTriggerSOS = async (triggerSource: 'manual' | 'voice'): Promise<SOSEvent | null> => {
     try {
+      let currentCoords = coordinates;
+
+      // Try to acquire fresh instant GPS location
+      if (navigator.geolocation) {
+        try {
+          const freshPos = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 4000,
+              maximumAge: 10000
+            });
+          });
+          currentCoords = {
+            latitude: freshPos.coords.latitude,
+            longitude: freshPos.coords.longitude,
+            accuracy: Math.round(freshPos.coords.accuracy)
+          };
+          setCoordinates(currentCoords);
+          setLocationStatus('available');
+        } catch (locErr) {
+          console.warn('[Location] Quick GPS fetch skipped or timed out, using cached coords:', locErr);
+        }
+      }
+
       const idempotencyKey = `sos-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const res = await api.triggerSOS({
         idempotencyKey,
         triggerSource,
-        coordinates,
-        notes: triggerSource === 'voice' ? 'Triggered via voice keyword simulation' : 'Manual button activation'
+        coordinates: currentCoords,
+        notes: triggerSource === 'voice' ? 'Triggered via voice keyword detection' : 'Manual button activation'
       });
 
       if (res.success) {
         setActiveSOS(res.sosEvent);
         setSosEvents(prev => [res.sosEvent, ...prev]);
-        setStatusMessage({ text: `SOS Alert successfully dispatched via ${triggerSource.toUpperCase()}`, type: 'success' });
+        setIsSOSModalOpen(true);
+        setStatusMessage({ text: `🚨 SOS Alert successfully dispatched via ${triggerSource.toUpperCase()}! Emergency contacts notified.`, type: 'error' });
         return res.sosEvent;
       }
       return null;

@@ -139,11 +139,56 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                 </div>
               )}
 
-              {/* Honest Individual Provider Status List */}
+              {/* Instant WhatsApp & SMS Trigger for Emergency Contacts */}
+              {activeEvent.notifications && activeEvent.notifications.length > 0 && (
+                <div className="mb-4 text-left">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                    <span>Direct Emergency Dispatch</span>
+                    <span className="text-[10px] text-emerald-600 font-semibold lowercase">instant delivery</span>
+                  </h4>
+                  <div className="space-y-2">
+                    {activeEvent.notifications.map((n, idx) => {
+                      const cleanPhone = (n.phoneNumber || n.phone || '').replace(/[^0-9]/g, '');
+                      const alertText = encodeURIComponent(
+                        `🚨 EMERGENCY SOS ALERT! I need urgent help! My Live Location: ${activeEvent.locationLink || 'Unavailable'}. Please check on me or contact 112 immediately!`
+                      );
+                      const whatsappUrl = `https://wa.me/${cleanPhone}?text=${alertText}`;
+                      const smsUrl = `sms:${n.phoneNumber || n.phone}?body=${alertText}`;
+
+                      return (
+                        <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-slate-900 text-xs">{n.name}</p>
+                            <p className="text-[11px] text-slate-500">{n.phoneNumber || n.phone}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                            <a
+                              href={whatsappUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-2.5 py-1.5 rounded-lg transition shadow-xs"
+                            >
+                              <span>Send WhatsApp</span>
+                            </a>
+                            <a
+                              href={smsUrl}
+                              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 text-[11px] bg-slate-800 hover:bg-slate-900 text-white font-semibold px-2.5 py-1.5 rounded-lg transition shadow-xs"
+                            >
+                              <span>Send SMS</span>
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Individual Provider Status List */}
               {activeEvent.notifications && activeEvent.notifications.length > 0 && (
                 <div className="mb-4 text-left">
                   <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Notification Provider Status
+                    Carrier Gateway Status
                   </h4>
                   <div className="space-y-1.5">
                     {activeEvent.notifications.map((n, idx) => (
@@ -162,7 +207,7 @@ export const SOSModal: React.FC<SOSModalProps> = ({
                               Demo Dispatched
                             </span>
                           ) : (
-                            <span className="text-[10px] bg-red-100 text-red-800 font-semibold px-2 py-0.5 rounded-full">
+                            <span className="text-[10px] bg-red-100 text-red-800 font-semibold px-2 py-0.5 rounded-full" title={n.details || undefined}>
                               {n.status}
                             </span>
                           )}

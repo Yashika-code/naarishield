@@ -147,10 +147,60 @@ export class NotificationService {
     const inviterName = user.displayName || 'A user';
     const message = `Hello ${contact.name}, ${inviterName} has nominated you as their trusted emergency contact on NariShield.ai. Please confirm and verify your number by clicking: ${inviteUrl}`;
 
-    console.log(`[NotificationService] Invitation sent to ${contact.name} (${contact.phoneNumber}): ${message}`);
+    console.log(`[NotificationService] Invitation for ${contact.name} (${contact.phoneNumber}): ${message}`);
+
+    if (this.isTwilioConfigured() && this.smsProvider === 'twilio') {
+      try {
+        const authHeader = 'Basic ' + Buffer.from(`${this.twilioAccountSid}:${this.twilioAuthToken}`).toString('base64');
+        const params = new URLSearchParams();
+        params.append('To', contact.phoneNumber);
+        params.append('From', this.twilioPhoneNumber);
+        params.append('Body', message);
+
+        const response = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${this.twilioAccountSid}/Messages.json`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params
+          }
+        );
+
+        const result = await response.json();
+        if (response.ok) {
+          return {
+            status: 'DELIVERED',
+            provider: 'twilio-sms',
+            providerMessageId: result.sid,
+            inviteUrl,
+            timestamp: new Date().toISOString()
+          };
+        } else {
+          return {
+            status: 'FAILED',
+            provider: 'twilio-sms',
+            details: result.message || 'Twilio rejected message',
+            inviteUrl,
+            timestamp: new Date().toISOString()
+          };
+        }
+      } catch (err) {
+        return {
+          status: 'FAILED',
+          provider: 'twilio-sms',
+          details: err.message,
+          inviteUrl,
+          timestamp: new Date().toISOString()
+        };
+      }
+    }
+
     return {
-      status: this.isTwilioConfigured() ? 'DELIVERED' : 'DEMO_DISPATCHED',
-      provider: this.isTwilioConfigured() ? 'twilio-sms' : 'safe-demo-mode',
+      status: 'DEMO_DISPATCHED',
+      provider: 'safe-demo-mode',
       inviteUrl,
       timestamp: new Date().toISOString()
     };
@@ -174,7 +224,7 @@ export class NotificationService {
       const params = new URLSearchParams();
       params.append('To', contact.phoneNumber);
       params.append('From', this.twilioPhoneNumber);
-      params.append('Twiml', `<Response><Say voice="alice">Emergency alert from NariShield.ai. User ${user.displayName || 'Unknown'} has triggered a distress alert. Please check your SMS and verify immediately.</Say></Response>`);
+      params.append('Url', 'https://demo.twilio.com/docs/voice.xml');
 
       const response = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${this.twilioAccountSid}/Calls.json`,
